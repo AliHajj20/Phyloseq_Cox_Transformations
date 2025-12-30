@@ -1,0 +1,382 @@
+---
+title: "Your Report Title"
+author: "Your Name"
+format: pdf
+editor: visual
+---
+
+# Evaluating the Impact of Data Transformation Formats on Cox Proportional Hazards Model Performance
+
+```{r}
+library(phyloseq)
+```
+
+Load the dataset
+
+```{r}
+load("biom.Rdata")
+library(ggplot2)
+```
+
+Assign the loaded object to a new variable 'phy' and display its summarylibrary(ggplot2) library(lattice)
+
+```{r}
+phy <- biom
+```
+
+agglomerate all the features of the same genus in a single variable
+
+```{r}
+phyg <- tax_glom(phy, taxrank = "Genus" )
+phyg
+```
+
+Filter out taxa that are absent (i.e., zero) in more than 95% of the samples
+
+```{r}
+phyg_f = filter_taxa(phyg, function(x) (sum(x == 0)/length(x)) <= 0.95, TRUE)
+phyg_f
+```
+
+Loading coda4microbiome and preparing input data, survival time, status, and covariates
+
+```{r}
+library(coda4microbiome)
+# Set data
+x = data.frame(t(otu_table(phyg_f)))#extracts the OTU matrix from phyloseq object and transform it to a dataframe
+time = as.numeric(sample_data(phyg_f)$T1Dweek)
+status = as.numeric(sample_data(phyg_f)$T1D)
+covars = data.frame(sample_data(phyg_f)$Sex, # Gender
+                    sample_data(phyg_f)$Antibiotics) # Antibiotics
+```
+
+## I-Fitting a Cox proportional hazard model into all- pairwise log-ratio data format
+
+```{r}
+set.seed(12345)
+T1Dmodel <- coda_coxnet(as.matrix(x),#dataframe
+                        time,#time to event
+                        status,#event occurrence 0/1
+                        covar=covars, #data frame with covariates which are variables that might influence the time to event,
+                        lambda = "lambda.1se",#penalization parameter,controls the strength of the penalty applied to the model, controls the overfitting
+                        alpha = 0.9, nfolds = 5,#elatic net parameter
+                        showPlots = FALSE,#no plots
+                        coef_threshold = 0.01)#minimum absolute value of the coefficient for a variable to be included in the model
+T1Dmodel
+
+survcurve <- plot_survcurves(risk.score = T1Dmodel$risk.score,
+                             time,
+                             status,
+                             strata.quantile = 0.5)
+survcurve
+```
+
+Plot analysis:
+
+.based on the **Microbial risk plot**: higher presence of T1D develop- ment events for those individuals with higher microbial risk scores.
+
+.based on the **Microbial signature for T1D onset plot**, X262095 and X4407703 are the most significant taxonomy that influence the development of type 1 diabetes / 10 taxa with positive coefficient and 11 taxa with negative coefficient.
+
+.based on the **survival curve**: aim to assess the possible association between the microbial risk score (survival probability) and the time to development of T1D. red line: individuals with higher microbial risk score shows shorter times of T1D. blue line:individuals presenting lower values of microbial risk scores develops T1D at later time.
+
+Calculate Harrell's c-index for T1Dmodel
+
+```{r}
+library(survival)
+
+# Calculate C-index
+cindex_1 <- concordance(
+  Surv(time, status) ~ T1Dmodel$risk.score,
+  reverse = TRUE
+)
+
+# Extract and print correctly
+cindex_value_1 <- cindex_1$concordance
+print(paste("T1Dmodel C-index:", round(cindex_value_1, 3)))
+```
+
+## II- ilr Transformation and Cox Model Implementation
+
+```{r}
+source("~/Desktop/Microbiome_Analysis/CoxModel_Microbiome_Transforms/abund_coxnet2.R")
+```
+
+```{r}
+
+library(survival)
+set.seed(12345)
+T2Dmodel <- abund_coxnet2(phyg_f,#dataframe
+                        time,#time to event
+                        status,#event occurrence 0/1
+                        covar=covars, #data frame with covariates which are variables that might influence the time to event,
+                        lambda = "lambda.1se",#penalization parameter,controls the strength of the penalty applied to the model, controls the overfitting
+                        alpha = 0.9, nfolds = 5,#elatic net parameter
+                        showPlots = FALSE,#no plots
+                        coef_threshold = 0.01, transform = "ilr")#minimum absolute value of the coefficient for a variable to be included in the model
+
+
+# Extracting selected taxa and log-contrast coefficients from the fitted T1D model
+T2Dmodel$taxa.num
+T2Dmodel$taxa.name
+
+#risk score
+T2Dmodel$`risk_score_plot`
+#signature plot
+T2Dmodel$`signature_plot`
+#survival curve
+survcurve_2 <- plot_survcurves(risk.score = T2Dmodel$risk.score,
+                             time,
+                             status,
+                             strata.quantile = 0.5)
+survcurve_2
+```
+
+.based on the **Microbial risk plot**: higher presence of T1D development events for those individuals with higher microbial risk scores.( similar to log-ratio transformation)
+
+.based on the **Microbial signature for T1D onset plot**, X262095 and X177271 are the most significant taxonomy that influence the development of type 1 diabetes / 10 taxa with positive coefficient and 9 taxa with negative coefficient.
+
+.Based on **survival curve**, red line: individuals with higher microbial risk score shows shorter times of T1D. blue line:individuals presenting lower values of microbial risk scores develops T1D at later time. (similar to log-ratio transformation)
+
+.The main limitations of this approach are the difficulty of implementing the ilr transformation in high- dimensional contexts that involve compositions of hundreds of features
+
+Calculate Harrell's c-index for T2Dmodel
+
+```{r}
+# Compute C-index for T2Dmodel
+cindex_result_2 <- concordance(
+  Surv(time, status) ~ T2Dmodel$risk.score,
+  reverse = TRUE  # Critical for Cox models: higher risk = shorter survival
+)
+
+# Extract and print the C-index with proper naming
+cindex_value_2 <- cindex_result_2$concordance  # Note: corrected spelling of 'concordance'
+print(paste("C-index_2:", round(cindex_value_2, 3)))
+```
+
+## III- ALR Transformation and Cox Model Implementation
+
+```{r}
+set.seed(12345)
+T3Dmodel <- abund_coxnet2(phyg_f,#dataframe
+                          time,#time to event
+                          status,#event occurrence 0/1
+                          covar=covars, #data frame with covariates which are variables that might influence the time to event,
+                          lambda = "lambda.1se",#penalization parameter,controls the strength of the penalty applied to the model, controls the overfitting
+                          alpha = 0.9, nfolds = 5,#elatic net parameter
+                          showPlots = FALSE,#no plots
+                          coef_threshold = 0.01, transform = "alr")#minimum absolute value of the coefficient for a variable to be included in the model
+
+# Extracting selected taxa and log-contrast coefficients from the fitted T1D model
+T3Dmodel$taxa.num
+T3Dmodel$taxa.name
+
+#risk score
+T3Dmodel$`risk_score_plot`
+#signature plot
+T3Dmodel$`signature_plot`
+#survival curve
+survcurve_3 <- plot_survcurves(risk.score = T3Dmodel$risk.score,
+                             time,
+                             status,
+                             strata.quantile = 0.5)
+survcurve_3
+```
+
+.based on the **Microbial risk plot**: higher presence of T1D development events for those individuals with higher microbial risk scores.( similar to log-ratio transformation)
+
+.based on the **Microbial signature for T1D onset plot**, X262095 and X177271 are the most significant taxonomy that influence the development of type 1 diabetes / 9 taxa with positive coefficient and 6 taxa with negative coefficient.
+
+.Based on **survival curve**, red line: individuals with higher microbial risk score shows shorter times of T1D. blue line:individuals presenting lower values of microbial risk scores develops T1D at later time. (similar to log-ratio transformation).
+
+.The main limitations of the ALR transformation:\
+a- Unlike logratio transformation ALR transformations are **not strictly isometric**, meaning they do not *exactly* preserve the geometric structure of the original compositional data.\
+b- ALR requires **selecting a reference component** against which all other components are compared. This means that when using ALR transformation to study microbiome data, one microbe (or feature) acts as a "reference", so very other microbe organism is compared to this reference then applying mathematical operation. Such thing can create a bias\
+c- zero values are imputed or adjusted which can distort the resulting logratios\
+d- Scaling issues might occur if reference is poorly chosen.\
+The results of ALR transformation are dependent on the choice of the reference component. Different reference components may lead to different interpretations, making it less robust than other transformations.
+
+Calculate Harrell's c-index for T3Dmodel
+
+```{r}
+# Load the survival package (if not already loaded)
+library(survival)
+# Compute C-index
+cindex_result_3 <- concordance(
+  Surv(time, status) ~ T3Dmodel$risk.score,
+  reverse = TRUE  # Essential for Cox models: higher risk = shorter survival
+)
+# Extract and print the C-index
+cindex_value_3 <- cindex_result_3$concordance
+print(paste("Harrell's C-index for T3Dmodel:", round(cindex_value_3, 3)))
+```
+
+## IV-Relative abundance Transformation and Cox Model Implementation
+
+```{r}
+set.seed(12345)
+T4Dmodel <- abund_coxnet2(phyg_f,#dataframe
+                          time,#time to event
+                          status,#event occurrence 0/1
+                          covar=covars, #data frame with covariates which are variables that might influence the time to event,
+                          lambda = "lambda.1se",#penalization parameter,controls the strength of the penalty applied to the model, controls the overfitting
+                          alpha = 0.9, nfolds = 5,#elatic net parameter
+                          showPlots = FALSE,#no plots
+                          coef_threshold = 0.01, transform = "rel")#minimum absolute value of the coefficient for a variable to be included in the model
+
+# Extracting selected taxa and log-contrast coefficients from the fitted T1D model
+T4Dmodel$taxa.num
+T4Dmodel$taxa.name
+
+#risk score
+T4Dmodel$`risk_score_plot`
+#signature plot
+T4Dmodel$`signature_plot`
+#survival curve
+survcurve_4 <- plot_survcurves(risk.score = T4Dmodel$risk.score,
+                             time,
+                             status,
+                             strata.quantile = 0.5)
+survcurve_4
+```
+
+.based on the **Microbial risk plot**: higher presence of T1D development events for those individuals with higher microbial risk scores.(different distributions of event points compared to log-ratio transformation)\
+.based on the **Microbial signature for T1D onset plot**, only the organism X138389 is a significant taxonomy that influence the development of type 1 diabetes. it has a positive coefficient.\
+.Based on **survival curve**, red line: individuals with higher microbial risk score shows shorter times of T1D. blue line:individuals presenting lower values of microbial risk scores develops T1D at later time. (similar to log-ratio transformation).\
+Relative abundance transformations fail to reveal the full microbial contribution to disease development. This can be because cox’s model cannot be directly applied to compositional covariates without some previous log-ratio transformation that map these features from the simplex to the real space.
+
+Calculate Harrell's c-index for T4Dmodel
+
+```{r}
+# Load the survival package (if not already loaded)
+library(survival)
+# Compute C-index
+cindex_result_4 <- concordance(
+  Surv(time, status) ~ T4Dmodel$risk.score,
+  reverse = TRUE  # Essential for Cox models: higher risk = shorter survival
+)
+# Extract and print the C-index
+cindex_value_4 <- cindex_result_4$concordance
+print(paste("Harrell's C-index for T4Dmodel:", round(cindex_value_4, 3)))
+```
+
+## V- Clr (compositionaly log ratio) Transformation and Cox Model Implementation
+
+```{r}
+set.seed(12345)
+T5Dmodel <- abund_coxnet2(phyg_f,#dataframe
+                          time,#time to event
+                          status,#event occurrence 0/1
+                          covar=covars, #data frame with covariates which are variables that might influence the time to event,
+                          lambda = "lambda.1se",#penalization parameter,controls the strength of the penalty applied to the model, controls the overfitting
+                          alpha = 0.9, nfolds = 5,#elatic net parameter
+                          showPlots = FALSE,#no plots
+                          coef_threshold = 0.01, transform = "clr")#minimum absolute value of the coefficient for a variable to be included in the model
+
+# Extracting selected taxa and log-contrast coefficients from the fitted T1D model
+T5Dmodel$taxa.num
+T5Dmodel$taxa.name
+
+#risk score
+T5Dmodel$`risk_score_plot`
+#signature plot
+T5Dmodel$`signature_plot`
+#survival curve
+survcurve_5 <- plot_survcurves(risk.score = T5Dmodel$risk.score,
+                             time,
+                             status,
+                             strata.quantile = 0.5)
+survcurve_5
+```
+
+.based on the **Microbial risk plot**: higher presence of T1D development events for those individuals with higher microbial risk scores.( similar to log-ratio transformation)
+
+.based on the **Microbial signature for T1D onset plot**, X262095 and X4407703 are the most significant taxonomy that influence the development of type 1 diabetes / 11 taxa with positive coefficient and taxa with 9 negative coefficient.\
+The results depend on the reference used.\
+interpret clr-transformed variables as single features while taking into account their dependence on the geometric mean.\
+Simulation studies showed that the power of selecting important variables is reduced by the clr transformation (23) for small compositions due to the high variability of the geometric mean, whereas when the number of variables is large, the effect on variable selection performance is negligible.\
+Finally, the clr transformation is not sub computationally behavior\
+Calculate Harrell's c-index for T5Dmodel
+
+```{r}
+# Load the survival package (if not already loaded)
+library(survival)
+# Compute C-index
+cindex_result_5 <- concordance(
+  Surv(time, status) ~ T3Dmodel$risk.score,
+  reverse = TRUE  # Essential for Cox models: higher risk = shorter survival
+)
+# Extract and print the C-index
+cindex_value_5 <- cindex_result_5$concordance
+print(paste("Harrell's C-index for T5Dmodel:", round(cindex_value_5, 3)))
+```
+
+## VI-no transformation
+
+```{r}
+set.seed(12345)
+T6Dmodel <- abund_coxnet2(phyg_f,#dataframe
+                          time,#time to event
+                          status,#event occurrence 0/1
+                          covar=covars, #data frame with covariates which are variables that might influence the time to event,
+                          lambda = "lambda.1se",#penalization parameter,controls the strength of the penalty applied to the model, controls the overfitting
+                          alpha = 0.9, nfolds = 5,#elatic net parameter
+                          showPlots = FALSE,#no plots
+                          coef_threshold = 0.01, transform = "none")#minimum absolute value of the coefficient for a variable to be included in the model
+
+# Extracting selected taxa and log-contrast coefficients from the fitted T1D model
+T6Dmodel$taxa.num
+T6Dmodel$taxa.name
+
+#risk score
+T6Dmodel$`risk_score_plot`
+#signature plot
+T6Dmodel$`signature_plot`
+#survival curve
+survcurve_6 <- plot_survcurves(risk.score = T6Dmodel$risk.score,
+                             time,
+                             status,
+                             strata.quantile = 0.5)
+survcurve_6
+```
+
+Calculate Harrell's c-index for T6Dmodel
+
+```{r}
+
+# Load the survival package (if not already loaded)
+library(survival)
+# Compute C-index
+cindex_result_6 <- concordance(
+  Surv(time, status) ~ T6Dmodel$risk.score,
+  reverse = TRUE  # Essential for Cox models: higher risk = shorter survival
+)
+# Extract and print the C-index
+cindex_value_6 <- cindex_result_6$concordance
+print(paste("Harrell's C-index for T6Dmodel:", round(cindex_value_6, 3)))
+```
+
+```{r}
+# Install and load the necessary packages
+# install.packages("kableExtra")  # Uncomment if not installed
+library(magrittr)              # For piping (%>%)
+library(kableExtra)            # For styling tables
+
+# Define the data
+transformation_format <- c("log-ratio", "Isometric Log-Ratio", "Additive Log-Ratio", 
+                           "Relative abundance", "compositionaly log ratio", "no transformation")
+C_index <- c(cindex_value_1, cindex_value_2, cindex_value_3, cindex_value_4, cindex_value_5, cindex_value_6)
+
+# Create a data frame
+table_data <- data.frame(transformation_format, C_index)
+
+# Apply black text and white background
+table_data %>%
+  knitr::kable() %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  kableExtra::row_spec(0, color = "black", background = "white") %>%  # Header row
+  kableExtra::row_spec(1:6, color = "black", background = "white")    # Data rows
+
+
+```
+
+According to Harrell’s C-index, the T4Dmodel based on the Relative Abundance Transformation demonstrated the best performance of the Cox models, indicating superior ability to discriminate between high- and low-risk subjects.
