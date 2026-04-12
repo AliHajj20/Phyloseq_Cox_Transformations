@@ -59,9 +59,12 @@ But for APLR transformation I used coda_coxnet
 
 --
 
-The script includes a custom function abund_coxnet2, which implements a penalized Cox regression model on different data transformations (e.g., ILR, ALR, CLR, and relative abundance). This function is defined in a separate script and needs to be sourced before use:
+This repository includes a custom function, "abund_coxnet2", which performs multiple microbiome abundance transformations (e.g., ILR, ALR, CLR, and relative abundance) based on user input. Then, does Cox’s proportional hazard regression model implementation on the Phyloseq data structure.
+This function is defined in a separate script and needs to be sourced before use:
 
 source("abund_coxnet2.R")
+
+For the purpose of reproducing this analysis, first run the source code "abund_coxnet2 so it's saved in the environment.
 
 --
 
